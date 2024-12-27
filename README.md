@@ -14,4 +14,28 @@ If changes were made, it displays a sample row from the first sheet after updati
 
 This script ensures data integrity by backing up the original file before modification and provides feedback on the operations performed.
 
+## This PowerShell script, UserFix.ps1, is designed to modify Excel spreadsheets by appending the AgencyID to the UserID column where the UserID is numeric. Here's a breakdown of its functionality:
+
+- Parameters:
+It takes one mandatory parameter, $FilePath, which specifies the path to the Excel file to be processed.
+- File Handling:
+The script uses the Resolve-Path cmdlet to get the full path of the input file, ensuring the file exists before processing.
+- Excel Manipulation:
+Utilizes the Excel COM Object to interact with Excel files. This allows for more complex manipulation of Excel data without requiring external libraries like Excel Interop.
+- Processing Logic:
+The script opens the Excel workbook and iterates through each worksheet. For each worksheet:
+It searches for columns named "AgencyID" and "UserID" (with some flexibility in naming due to case-insensitive and space-insensitive matching).
+If these columns are found, it processes each row starting from the second row (assuming the first row is headers):
+It concatenates AgencyID and UserID only if UserID is purely numeric, creating a new UserID in the format AgencyIDUserID.
+- Logging and Diagnostics:
+A diagnostic log file is created or cleared, logging actions like file processing details, column headers, and row modifications for debugging purposes.
+- Error Handling and Cleanup:
+The script includes error handling to catch and report issues during execution. It also ensures proper cleanup of COM objects to avoid memory leaks.
+- Backup Creation:
+Before saving changes, the script creates a timestamped backup of the original Excel file, ensuring data integrity.
+- Output:
+Messages are written to the console indicating success, backup creation, or errors encountered during the process.
+
+Overall, this script is useful for data normalization or standardization tasks within Excel spreadsheets in an organizational context where user IDs need to be prefixed with an agency identifier for consistency or tracking purposes.
+
 ## The description was created using Grok to provide an insightful overview of the script's functionality.
