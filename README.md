@@ -1,4 +1,4 @@
-# The PhoneFix.ps1 script is designed to format phone numbers in an Excel file. Here's a brief description of its functionality:
+## The PhoneFix.ps1 script is designed to format phone numbers in an Excel file. Here's a brief description of its functionality:
 
 - Input: It takes a file path as a mandatory parameter ($FilePath).
 File Check: It first checks if the specified file exists, exiting if it doesn't.
@@ -14,4 +14,4 @@ If changes were made, it displays a sample row from the first sheet after updati
 
 This script ensures data integrity by backing up the original file before modification and provides feedback on the operations performed.
 
-# The description was created using Grok to provide an insightful overview of the script's functionality.
+## The description was created using Grok to provide an insightful overview of the script's functionality.
