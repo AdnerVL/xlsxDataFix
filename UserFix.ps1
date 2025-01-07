@@ -1,104 +1,153 @@
-# UserFix.ps1
-# Script to modify UserID columns in Excel spreadsheets by prefixing with AgencyID
 param(
-    [Parameter(Mandatory=$true, Position=0)]
+    [Parameter(Position=0)]
     [string]$FilePath
 )
-# Resolve the full path of the input file
-$FullFilePath = Resolve-Path $FilePath -ErrorAction Stop
-# Fallback method using Excel COM object
+
+function List-ExcelFiles {
+    $scriptDir = (Get-Location).Path
+    $excelFiles = Get-ChildItem -Path $scriptDir -Filter *.xlsx
+    if ($excelFiles.Count -eq 0) {
+        Write-Host "No Excel files found in the script directory." -ForegroundColor Red
+        exit
+    }
+    Write-Host "Available Excel files in the script directory:" -ForegroundColor Green
+    for ($i = 0; $i -lt $excelFiles.Count; $i++) {
+        Write-Host "[$i] $($excelFiles[$i].Name)"
+    }
+    return $excelFiles
+}
+
 function Process-ExcelWithCOMObject {
     param([string]$FilePath)
-    $excel = New-Object -ComObject Excel.Application
-    $excel.Visible = $false
-    $excel.DisplayAlerts = $false
+    
+    $excel = $null
+    $workbook = $null
+    $worksheet = $null
+    
     try {
-        $workbook = $excel.Workbooks.Open($FilePath)
-        # Create a log file for diagnostics
-        $logPath = Join-Path (Split-Path $FilePath -Parent) "UserFix_Diagnostic_Log.txt"
-        # Clear previous log if exists
-        if (Test-Path $logPath) { Clear-Content $logPath }
-        Add-Content -Path $logPath -Value "Diagnostic Log for UserFix Script"
-        Add-Content -Path $logPath -Value "Processed File: $FilePath"
-        Add-Content -Path $logPath -Value "Processing Date: $(Get-Date)`n"
-        # Iterate through each worksheet
-        foreach ($worksheet in $workbook.Worksheets) {
-            $worksheet.Select() | Out-Null
-            Add-Content -Path $logPath -Value "Worksheet Name: $($worksheet.Name)"
-            # Find column indices
-            $headerRow = $worksheet.UsedRange.Rows(1)
-            $agencyIDCol = -1
-            $userIDCol = -1
-            # Log all column headers for debugging
-            Add-Content -Path $logPath -Value "Column Headers:"
-            for ($col = 1; $col -le $worksheet.UsedRange.Columns.Count; $col++) {
-                $colHeader = $headerRow.Cells($col).Text
-                Add-Content -Path $logPath -Value "Column ${col}: '$colHeader'"
-                # More flexible column matching
-                if ($colHeader -replace '\s','' -like "*AgencyID*") { $agencyIDCol = $col }
-                if ($colHeader -replace '\s','' -like "*UserID*") { $userIDCol = $col }
-            }
-            Add-Content -Path $logPath -Value "`nFound Columns:"
-            Add-Content -Path $logPath -Value "AgencyID Column: $agencyIDCol"
-            Add-Content -Path $logPath -Value "UserID Column: $userIDCol"
-            if ($agencyIDCol -eq -1 -or $userIDCol -eq -1) {
-                Add-Content -Path $logPath -Value "ERROR: Required columns not found"
-                Write-Host "Required columns not found in worksheet: $($worksheet.Name)" -ForegroundColor Yellow
-                continue
-            }
-            # Process rows
-            Add-Content -Path $logPath -Value "`nRow Processing:"
-            for ($row = 2; $row -le $worksheet.UsedRange.Rows.Count; $row++) {
-                $agencyID = $worksheet.Cells($row, $agencyIDCol).Text.Trim()
-                $userID = $worksheet.Cells($row, $userIDCol).Text.Trim()
-                Add-Content -Path $logPath -Value "Row $row - AgencyID: '$agencyID', UserID: '$userID'"
-                # Check if UserID is numeric
-                if ($userID -match '^\d+$') {
-                    $newUserID = "$agencyID$userID"
-                    $worksheet.Cells($row, $userIDCol).Value2 = $newUserID
-                    Add-Content -Path $logPath -Value "Modified Row ${row}: New UserID = '$newUserID'"
-                }
-            }
-        }
-        # Create backup
+        # Create backup before any modifications
         $backupDate = Get-Date -Format "yyyyMMdd_HHmmss"
         $backupFileName = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
         $backupExtension = [System.IO.Path]::GetExtension($FilePath)
         $backupPath = Join-Path (Split-Path $FilePath -Parent) "$backupFileName`_$backupDate$backupExtension"
-        $workbook.SaveAs($backupPath)
-        $workbook.Save()
+        Copy-Item -Path $FilePath -Destination $backupPath -Force
         Write-Host "Backup created: $backupPath" -ForegroundColor Green
-        Write-Host "File processed successfully: $FilePath" -ForegroundColor Green
-        Add-Content -Path $logPath -Value "`nBackup created: $backupPath"
+
+        # Initialize Excel
+        Write-Host "Initializing Excel..." -ForegroundColor Yellow
+        $excel = New-Object -ComObject Excel.Application
+        $excel.Visible = $false
+        $excel.DisplayAlerts = $false
+
+        # Open workbook with retry mechanism
+        $maxRetries = 3
+        $retryCount = 0
+        while ($true) {
+            try {
+                $workbook = $excel.Workbooks.Open($FilePath)
+                break
+            } catch {
+                $retryCount++
+                if ($retryCount -ge $maxRetries) {
+                    throw "Failed to open workbook after $maxRetries attempts: ${_}"
+                }
+                Start-Sleep -Seconds 2
+            }
+        }
+
+        # Process each worksheet
+        foreach ($worksheet in $workbook.Worksheets) {
+            Write-Host "Processing worksheet: $($worksheet.Name)" -ForegroundColor Yellow
+            
+            # Find columns
+            $headerRow = $worksheet.UsedRange.Rows(1)
+            $agencyIDCol = -1
+            $userIDCol = -1
+            
+            for ($col = 1; $col -le $headerRow.Columns.Count; $col++) {
+                $header = $headerRow.Cells(1, $col).Text.Trim()
+                if ($header -replace '\s','' -like "*AgencyID*") { $agencyIDCol = $col }
+                if ($header -replace '\s','' -like "*UserID*") { $userIDCol = $col }
+            }
+            
+            if ($agencyIDCol -eq -1 -or $userIDCol -eq -1) {
+                Write-Host "Skipping worksheet $($worksheet.Name): Required columns not found" -ForegroundColor Yellow
+                continue
+            }
+
+            # Process rows
+            $rowCount = $worksheet.UsedRange.Rows.Count
+            for ($row = 2; $row -le $rowCount; $row++) {
+                try {
+                    $agencyID = $worksheet.Cells($row, $agencyIDCol).Text.Trim()
+                    $userID = $worksheet.Cells($row, $userIDCol).Text.Trim()
+                    
+                    if ([string]::IsNullOrWhiteSpace($userID)) { continue }
+                    
+                    if ($userID -match '[a-zA-Z]') {
+                        # Replace letters with AgencyID while keeping numbers after
+                        $newUserID = $agencyID + ($userID -replace '[a-zA-Z]', '')
+                    } else {
+                        # Append AgencyID before numeric UserID
+                        $newUserID = "$agencyID$userID"
+                    }
+                    
+                    $worksheet.Cells($row, $userIDCol).Value2 = $newUserID
+                } catch {
+                    Write-Host "Error processing row ${row}: ${_}" -ForegroundColor Red
+                }
+            }
+        }
+
+        $workbook.Save()
+        Write-Host "Changes saved successfully" -ForegroundColor Green
     }
     catch {
-        Write-Host "Error processing file: $_" -ForegroundColor Red
+        Write-Host "Excel processing error: ${_}" -ForegroundColor Red
+        throw
     }
     finally {
+        if ($worksheet) {
+            try { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($worksheet) } catch {}
+        }
         if ($workbook) {
-            $workbook.Close($false)
+            try {
+                $workbook.Close($false)
+                [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbook)
+            } catch {}
         }
         if ($excel) {
-            $excel.Quit()
+            try {
+                $excel.Quit()
+                [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel)
+            } catch {}
         }
-        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($worksheet) | Out-Null
-        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbook) | Out-Null
-        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
         [System.GC]::Collect()
         [System.GC]::WaitForPendingFinalizers()
     }
 }
-# Main script execution
+
+# Main execution
 try {
-    # Verify file exists using full path
-    if (-not (Test-Path $FullFilePath)) {
-        Write-Host "File not found: $FullFilePath" -ForegroundColor Red
+    if (-not $FilePath) {
+        $excelFiles = List-ExcelFiles
+        $index = Read-Host "Please enter the index of the Excel file to process"
+        if ($index -match '^\d+$' -and $index -ge 0 -and $index -lt $excelFiles.Count) {
+            $FilePath = $excelFiles[$index].FullName
+        } else {
+            Write-Host "Invalid selection." -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    if (-not (Test-Path $FilePath)) {
+        Write-Host "File not found: $FilePath" -ForegroundColor Red
         exit 1
     }
-    # Process the file using COM object method
-    Process-ExcelWithCOMObject -FilePath $FullFilePath
+
+    Process-ExcelWithCOMObject -FilePath $FilePath
 }
 catch {
-    Write-Host "An unexpected error occurred: $_" -ForegroundColor Red
+    Write-Host "Fatal error: ${_}" -ForegroundColor Red
     exit 1
 }
